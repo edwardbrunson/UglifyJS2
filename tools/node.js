@@ -52,15 +52,18 @@ for (var i in UglifyJS) {
 
 exports.minify = function(files, options) {
     options = UglifyJS.defaults(options, {
-        spidermonkey : false,
-        outSourceMap : null,
-        sourceRoot   : null,
-        inSourceMap  : null,
-        fromString   : false,
-        warnings     : false,
-        mangle       : {},
-        output       : null,
-        compress     : {}
+        spidermonkey     : false,
+        sourceMap        : false,
+        sourceMapIn      : null,
+        sourceMapRoot    : null,
+        sourceMapTarget  : null,
+        sourceMapSources : [],
+        sourceMapURL     : null,
+        fromString       : false,
+        warnings         : false,
+        mangle           : {},
+        output           : null,
+        compress         : {}
     });
     UglifyJS.base54.reset();
 
@@ -73,10 +76,14 @@ exports.minify = function(files, options) {
     } else {
         if (typeof files == "string")
             files = [ files ];
-        files.forEach(function(file){
+        files.forEach(function(file,idx){
             var code = options.fromString
                 ? file
                 : fs.readFileSync(file, "utf8");
+
+            // override source filename with option or base file name default
+            file = options.sourceMapSources[idx] || path.basename(file);
+
             sourcesContent[file] = code;
             toplevel = UglifyJS.parse(code, {
                 filename: options.fromString ? "?" : file,
@@ -102,17 +109,18 @@ exports.minify = function(files, options) {
     }
 
     // 4. output
-    var inMap = options.inSourceMap;
+    var inMap = options.sourceMapIn;
     var output = {};
-    if (typeof options.inSourceMap == "string") {
-        inMap = fs.readFileSync(options.inSourceMap, "utf8");
+    if (typeof options.sourceMapIn == "string") {
+        inMap = fs.readFileSync(options.sourceMapIn, "utf8");
     }
-    if (options.outSourceMap) {
+    if (options.sourceMap) {
         output.source_map = UglifyJS.SourceMap({
-            file: options.outSourceMap,
+            file: options.sourceMapTarget,
             orig: inMap,
-            root: options.sourceRoot
+            root: options.sourceMapRoot
         });
+
         if (options.sourceMapIncludeSources) {
             for (var file in sourcesContent) {
                 if (sourcesContent.hasOwnProperty(file)) {
@@ -128,8 +136,8 @@ exports.minify = function(files, options) {
     var stream = UglifyJS.OutputStream(output);
     toplevel.print(stream);
 
-    if(options.outSourceMap){
-        stream += "\n//# sourceMappingURL=" + options.outSourceMap;
+    if(options.sourceMapURL){
+        stream += "\n//# sourceMappingURL=" + options.sourceMapURL;
     }
 
     var source_map = output.source_map;
