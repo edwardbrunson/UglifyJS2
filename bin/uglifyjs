@@ -19,17 +19,15 @@ Without [options] it will simply parse input files and dump the AST\n\
 with whitespace and comments discarded.  To achieve compression and\n\
 mangling you need to use `-c` and `-m`.\
 ")
-    .describe("source-map", "Specify an output file where to generate source map.")
-    .describe("source-map-root", "The path to the original source to be included in the source map.")
-    .describe("source-map-url", "The path to the source map to be added in //# sourceMappingURL.  Defaults to the value passed with --source-map.")
+    .describe("source-map", "Pass this flag to generate a source map for the minified file. If a value is specified, it should be the path of the source map file to be created. Otherwise, the source map content will be included in the output.")
+    .describe("source-map-root", "A base path/URL specified in the source map with which all relative paths are prefixed.")
+    .describe("source-map-target", "Sets the file property of the source map, specifying the path to the minified file. If relative, should be relative to the location of the source map file.")
+    .describe("source-map-url", "The URL for the '//# sourceMappingURL=..' comment appended to the end of the minified file. If no value is specified, the URL will be a data URI of the contents of the source map.")
+    .describe("source-map-sources", "A space-separated list of source path(s) to override the corresponding input file(s) in the sources property of the source map. Should be in the same order and count as the input file(s) being minified. Use '' to skip overriding any single entry and keep its default value (filename) instead.")
     .describe("source-map-include-sources", "Pass this flag if you want to include the content of source files in the source map as sourcesContent property.")
-    .describe("in-source-map", "Input source map, useful if you're compressing JS that was generated from some other original code.")
+    .describe("source-map-in", "Input source map, useful if you're compressing JS that was generated from some other original code.")
     .describe("screw-ie8", "Pass this flag if you don't care about full compliance with Internet Explorer 6-8 quirks (by default UglifyJS will try to be IE-proof).")
     .describe("expr", "Parse a single expression, rather than a program (for parsing JSON)")
-    .describe("p", "Skip prefix for original filenames that appear in source maps. \
-For example -p 3 will drop 3 directories from file names and ensure they are relative paths. \
-You can also specify -p relative, which will make UglifyJS figure out itself the relative paths between original sources, \
-the source map and the output file.")
     .describe("o", "Output file (default STDOUT).")
     .describe("b", "Beautify output/specify output options.")
     .describe("m", "Mangle names/pass mangler options.")
@@ -72,7 +70,6 @@ You need to pass an argument to this option to specify the name that your module
     .describe("mangle-props", "Mangle property names")
     .describe("name-cache", "File to hold mangled names mappings")
 
-    .alias("p", "prefix")
     .alias("o", "output")
     .alias("v", "verbose")
     .alias("b", "beautify")
@@ -84,9 +81,8 @@ You need to pass an argument to this option to specify the name that your module
     .alias("e", "enclose")
     .alias("q", "quotes")
 
-    .string("source-map")
     .string("source-map-root")
-    .string("source-map-url")
+    .string("source-map-target")
     .string("b")
     .string("beautify")
     .string("m")
@@ -102,7 +98,11 @@ You need to pass an argument to this option to specify the name that your module
     .string("p")
     .string("prefix")
     .string("name-cache")
+
     .array("reserved-file")
+
+    .array("source-map-sources")
+    .default("source-map-sources",[],"empty list")
 
     .boolean("expr")
     .boolean("source-map-include-sources")
@@ -122,6 +122,13 @@ You need to pass an argument to this option to specify the name that your module
     .boolean("keep-fnames")
     .boolean("mangle-props")
     .boolean("reserve-domprops")
+
+    .implies("source-map-target","source-map")
+    .implies("source-map-root","source-map")
+    .implies("source-map-url","source-map")
+    .implies("source-map-sources","source-map")
+    .implies("source-map-include-sources","source-map")
+    .implies("source-map-in","source-map")
 
     .wrap(80)
 
@@ -248,7 +255,7 @@ if (ARGS.self) {
     ARGS.export_all = true;
 }
 
-var ORIG_MAP = ARGS.in_source_map;
+var ORIG_MAP = ARGS.source_map_in;
 
 if (ORIG_MAP) {
     ORIG_MAP = JSON.parse(fs.readFileSync(ORIG_MAP));
@@ -278,11 +285,11 @@ if (files.filter(function(el){ return el == "-" }).length > 1) {
 var STATS = {};
 var OUTPUT_FILE = ARGS.o;
 var TOPLEVEL = null;
-var P_RELATIVE = ARGS.p && ARGS.p == "relative";
 var SOURCES_CONTENT = {};
+var SOURCE_MAP_SOURCES = ARGS.source_map_sources;
 
 var SOURCE_MAP = ARGS.source_map ? UglifyJS.SourceMap({
-    file: P_RELATIVE ? path.relative(path.dirname(ARGS.source_map), OUTPUT_FILE) : OUTPUT_FILE,
+    file: ARGS.source_map_target,
     root: ARGS.source_map_root,
     orig: ORIG_MAP,
 }) : null;
@@ -301,22 +308,20 @@ try {
     }
 }
 
+var file_idx = 0;
+
 async.eachLimit(files, 1, function (file, cb) {
+    var idx = file_idx++;
+
     read_whole_file(file, function (err, code) {
         if (err) {
             print_error("ERROR: can't read file: " + file);
             process.exit(1);
         }
-        if (ARGS.p != null) {
-            if (P_RELATIVE) {
-                file = path.relative(path.dirname(ARGS.source_map), file).replace(/\\/g, '/');
-            } else {
-                var p = parseInt(ARGS.p, 10);
-                if (!isNaN(p)) {
-                    file = file.replace(/^\/+/, "").split(/\/+/).slice(ARGS.p).join("/");
-                }
-            }
-        }
+
+        // override source filename with option or base file name default
+        file = SOURCE_MAP_SOURCES[idx] || path.basename(file);
+
         SOURCES_CONTENT[file] = code;
         time_it("parse", function(){
             if (ARGS.spidermonkey) {
@@ -432,13 +437,19 @@ async.eachLimit(files, 1, function (file, cb) {
     output = output.get();
 
     if (SOURCE_MAP) {
-        fs.writeFileSync(ARGS.source_map, SOURCE_MAP, "utf8");
-        var source_map_url = ARGS.source_map_url || (
-            P_RELATIVE
-                ? path.relative(path.dirname(OUTPUT_FILE), ARGS.source_map)
-                : ARGS.source_map
-        );
-        output += "\n//# sourceMappingURL=" + source_map_url;
+        if (typeof ARGS.source_map == "string" && ARGS.source_map != "") {
+            fs.writeFileSync(ARGS.source_map, SOURCE_MAP, "utf8");
+        } else {
+            print(SOURCE_MAP + "\n\n");
+        }
+
+        if (ARGS.source_map_url) {
+            if (typeof ARGS.source_map_url != "string" || ARGS.source_map_url == "") {
+                ARGS.source_map_url = "data:application/json;base64," + (new Buffer(SOURCE_MAP.toString()).toString("base64"));
+            }
+
+            output += "\n//# sourceMappingURL=" + ARGS.source_map_url;
+        }
     }
 
     if (OUTPUT_FILE) {

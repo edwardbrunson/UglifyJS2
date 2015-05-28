@@ -137,6 +137,10 @@ exports.minify = function(files, options) {
     toplevel.print(stream);
 
     if(options.sourceMapURL){
+        if (typeof options.sourceMapURL != "string" || options.sourceMapURL == "") {
+            options.sourceMapURL = "data:application/json;base64," + (new Buffer(output.source_map.toString()).toString("base64"));
+        }
+
         stream += "\n//# sourceMappingURL=" + options.sourceMapURL;
     }
 
